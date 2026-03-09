@@ -9,6 +9,21 @@
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
+        if (!line.includes('|')) {
+          try {
+            const parsed = new URL(line);
+            return {
+              name: parsed.pathname.split('/').filter(Boolean).pop() || parsed.hostname,
+              url: parsed.toString()
+            };
+          } catch (_error) {
+            return {
+              name: '',
+              url: ''
+            };
+          }
+        }
+
         const [name, ...urlParts] = line.split('|');
         return {
           name: (name || '').trim(),

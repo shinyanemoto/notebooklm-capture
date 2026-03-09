@@ -14,7 +14,21 @@
 
   function normalize(settings) {
     const notebooks = Array.isArray(settings?.notebooks)
-      ? settings.notebooks.filter((item) => item && item.name && item.url)
+      ? settings.notebooks
+          .map((item) => {
+            if (!item || !item.url) {
+              return null;
+            }
+
+            const url = String(item.url).trim();
+            if (!url) {
+              return null;
+            }
+
+            const name = String(item.name || 'Notebook').trim() || 'Notebook';
+            return { name, url };
+          })
+          .filter(Boolean)
       : [];
 
     const position = settings?.ui?.position || DEFAULT_SETTINGS.ui.position;

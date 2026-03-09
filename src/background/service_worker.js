@@ -72,6 +72,25 @@ function normalizeNotebookUrl(url) {
   }
 }
 
+function extractNotebookId(url) {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/notebook\/([^/]+)/);
+    return match ? match[1] : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function isTargetNotebookTab(tabUrl, preferredUrl) {
+  const preferredId = extractNotebookId(preferredUrl);
+  if (preferredId) {
+    return extractNotebookId(tabUrl) === preferredId;
+  }
+
+  return normalizeNotebookUrl(tabUrl) === normalizeNotebookUrl(preferredUrl);
+}
+
 async function getConfiguredNotebookUrl() {
   const result = await chrome.storage.local.get({ [SETTINGS_STORAGE_KEY]: {} });
   const settings = result[SETTINGS_STORAGE_KEY] || {};
@@ -87,11 +106,7 @@ function selectNotebookTab(tabs, preferredUrl) {
   }
 
   if (preferredUrl) {
-    const preferred = normalizeNotebookUrl(preferredUrl);
-    const exact = tabs.find((tab) => {
-      const tabUrl = normalizeNotebookUrl(tab.url);
-      return tabUrl === preferred || (tabUrl && preferred && tabUrl.startsWith(preferred));
-    });
+    const exact = tabs.find((tab) => isTargetNotebookTab(tab.url, preferredUrl));
     if (exact) {
       return exact;
     }
