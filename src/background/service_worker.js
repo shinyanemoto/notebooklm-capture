@@ -88,10 +88,16 @@ function selectNotebookTab(tabs, preferredUrl) {
 
   if (preferredUrl) {
     const preferred = normalizeNotebookUrl(preferredUrl);
-    const exact = tabs.find((tab) => normalizeNotebookUrl(tab.url) === preferred);
+    const exact = tabs.find((tab) => {
+      const tabUrl = normalizeNotebookUrl(tab.url);
+      return tabUrl === preferred || (tabUrl && preferred && tabUrl.startsWith(preferred));
+    });
     if (exact) {
       return exact;
     }
+
+    // When a notebook is explicitly configured, do not fall back to another notebook tab.
+    return null;
   }
 
   const active = tabs.find((tab) => tab.active);
@@ -314,7 +320,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({
         ok: true,
         result,
-        tabId: tab.id
+        tabId: tab.id,
+        targetUrl
       });
     })
     .catch((error) => {
