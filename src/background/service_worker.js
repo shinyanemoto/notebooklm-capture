@@ -107,18 +107,18 @@ async function ensureNotebookTab(preferredUrl) {
     if (!isNotebookUrl(existing.url) && existing.id) {
       const updated = await chrome.tabs.update(existing.id, {
         url: fallbackUrl,
-        active: true
+        active: false
       });
-      return { tab: updated, opened: false };
+      return { tab: updated, opened: false, targetUrl: fallbackUrl };
     }
-    return { tab: existing, opened: false };
+    return { tab: existing, opened: false, targetUrl: fallbackUrl };
   }
 
   const created = await chrome.tabs.create({
     url: fallbackUrl,
-    active: true
+    active: false
   });
-  return { tab: created, opened: true };
+  return { tab: created, opened: true, targetUrl: fallbackUrl };
 }
 
 function delay(ms) {
@@ -196,34 +196,44 @@ function isTabAccessError(error) {
   return message.includes('Cannot access contents of the page');
 }
 
-async function ensureNotebookReceiver(tabId) {
-  if (!chrome.scripting?.executeScript) {
-    return false;
-  }
+function isHostPermissionError(error) {
+  const message = String(error?.message || '');
+  return message.includes('Extension manifest must request permission to access the respective host');
+}
 
-  let tab;
+async function getTabSnapshot(tabId) {
   try {
-    tab = await chrome.tabs.get(tabId);
+    const tab = await chrome.tabs.get(tabId);
+    return {
+      url: tab.url || '',
+      status: tab.status || 'unknown'
+    };
   } catch (_error) {
-    return false;
-  }
-
-  if (!isNotebookUrl(tab.url)) {
-    return false;
-  }
-
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['src/content/notebook_sender.js']
-    });
-    return true;
-  } catch (_error) {
-    return false;
+    return {
+      url: '',
+      status: 'unavailable'
+    };
   }
 }
 
-async function sendWithRetry(tabId, memoText, openedNow) {
+async function withTabContextError(error, tabId) {
+  const snapshot = await getTabSnapshot(tabId);
+  const base = String(error?.message || 'send_failed');
+  return new Error(`${base} [tabUrl=${snapshot.url || 'unknown'} tabStatus=${snapshot.status}]`);
+}
+
+async function recoverNotebookTab(tabId, targetUrl) {
+  const snapshot = await getTabSnapshot(tabId);
+  if (!isNotebookUrl(snapshot.url)) {
+    await chrome.tabs.update(tabId, {
+      url: sanitizeNotebookUrl(targetUrl) || DEFAULT_NOTEBOOK_URL,
+      active: false
+    });
+  }
+  await waitForNotebookTabReady(tabId, 25000);
+}
+
+async function sendWithRetry(tabId, memoText, openedNow, targetUrl) {
   const maxAttempts = openedNow ? 8 : 4;
   let lastError = null;
 
@@ -235,10 +245,14 @@ async function sendWithRetry(tabId, memoText, openedNow) {
       }
       lastError = new Error(response?.reason || 'send_failed');
     } catch (error) {
-      lastError = error;
+      lastError = await withTabContextError(error, tabId);
 
       if (isTabAccessError(error)) {
         await waitForNotebookTabReady(tabId);
+      }
+
+      if (isHostPermissionError(error)) {
+        await recoverNotebookTab(tabId, targetUrl);
       }
     }
     await delay(400 * attempt);
@@ -279,13 +293,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const memoText = buildMessage(payload, context);
 
   ensureNotebookTab(payload.notebookUrl)
-    .then(async ({ tab, opened }) => {
+    .then(async ({ tab, opened, targetUrl }) => {
       if (!tab?.id) {
         throw new Error('notebook_tab_unavailable');
       }
 
       await waitForNotebookTabReady(tab.id, opened ? 25000 : 10000);
-      const result = await sendWithRetry(tab.id, memoText, opened);
+      const result = await sendWithRetry(tab.id, memoText, opened, targetUrl);
       await addCaptureLog({
         memo,
         tags: normalizeTags(payload.tags),
