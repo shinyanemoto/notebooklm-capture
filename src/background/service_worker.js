@@ -117,6 +117,32 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isNotebookUrl(url) {
+  try {
+    return new URL(url).hostname.includes(NOTEBOOK_HOST);
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function waitForNotebookTabReady(tabId, timeoutMs = 15000) {
+  const startAt = Date.now();
+
+  while (Date.now() - startAt < timeoutMs) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (isNotebookUrl(tab.url) && tab.status === 'complete') {
+        return tab;
+      }
+    } catch (_error) {
+      // Tab can be temporarily unavailable during navigation.
+    }
+    await delay(300);
+  }
+
+  throw new Error('notebook_tab_not_ready');
+}
+
 async function sendToNotebookTab(tabId, memoText) {
   return chrome.tabs.sendMessage(tabId, {
     type: 'NOTEBOOKLM_CAPTURE_INSERT_AND_SEND',
@@ -132,15 +158,36 @@ function isMissingReceiverError(error) {
   );
 }
 
+function isTabAccessError(error) {
+  const message = String(error?.message || '');
+  return message.includes('Cannot access contents of the page');
+}
+
 async function ensureNotebookReceiver(tabId) {
   if (!chrome.scripting?.executeScript) {
-    return;
+    return false;
   }
 
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['src/content/notebook_sender.js']
-  });
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (_error) {
+    return false;
+  }
+
+  if (!isNotebookUrl(tab.url)) {
+    return false;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['src/content/notebook_sender.js']
+    });
+    return true;
+  } catch (_error) {
+    return false;
+  }
 }
 
 async function sendWithRetry(tabId, memoText, openedNow) {
@@ -157,6 +204,14 @@ async function sendWithRetry(tabId, memoText, openedNow) {
       lastError = new Error(response?.reason || 'send_failed');
     } catch (error) {
       lastError = error;
+
+      if (isTabAccessError(error)) {
+        try {
+          await waitForNotebookTabReady(tabId);
+        } catch (readyError) {
+          lastError = readyError;
+        }
+      }
 
       if (isMissingReceiverError(error) && !attemptedInjection) {
         attemptedInjection = true;
@@ -206,6 +261,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         throw new Error('notebook_tab_unavailable');
       }
 
+      await waitForNotebookTabReady(tab.id);
       const result = await sendWithRetry(tab.id, memoText, opened);
       await addCaptureLog({
         memo,
