@@ -5,7 +5,8 @@
   "description": "Capture quick memos from any page and send to NotebookLM.",
   "permissions": [
     "storage",
-    "tabs"
+    "tabs",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"

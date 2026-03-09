@@ -103,9 +103,29 @@ async function sendToNotebookTab(tabId, memoText) {
   });
 }
 
+function isMissingReceiverError(error) {
+  const message = String(error?.message || '');
+  return (
+    message.includes('Receiving end does not exist') ||
+    message.includes('Could not establish connection')
+  );
+}
+
+async function ensureNotebookReceiver(tabId) {
+  if (!chrome.scripting?.executeScript) {
+    return;
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['src/content/notebook_sender.js']
+  });
+}
+
 async function sendWithRetry(tabId, memoText, openedNow) {
   const maxAttempts = openedNow ? 6 : 3;
   let lastError = null;
+  let attemptedInjection = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -116,6 +136,11 @@ async function sendWithRetry(tabId, memoText, openedNow) {
       lastError = new Error(response?.reason || 'send_failed');
     } catch (error) {
       lastError = error;
+
+      if (isMissingReceiverError(error) && !attemptedInjection) {
+        attemptedInjection = true;
+        await ensureNotebookReceiver(tabId);
+      }
     }
     await delay(400 * attempt);
   }
