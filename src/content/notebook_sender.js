@@ -2,7 +2,6 @@
 
 (() => {
   const NOTEBOOK_HOST = 'notebooklm.google.com';
-  const DEFAULT_NOTEBOOK_URL = `https://${NOTEBOOK_HOST}/`;
   const INPUT_SELECTORS = [
     'textarea[aria-label*="message" i]',
     'textarea[placeholder*="message" i]',
@@ -14,8 +13,8 @@
     'button[type="submit"]'
   ];
 
-  function findInputElement() {
-    for (const selector of INPUT_SELECTORS) {
+  function findBySelectors(selectors) {
+    for (const selector of selectors) {
       const element = document.querySelector(selector);
       if (element) {
         return element;
@@ -24,19 +23,18 @@
     return null;
   }
 
+  function findInputElement() {
+    return findBySelectors(INPUT_SELECTORS);
+  }
+
   function findSendButton() {
-    for (const selector of SEND_BUTTON_SELECTORS) {
-      const element = document.querySelector(selector);
-      if (element) {
-        return element;
-      }
-    }
-    return null;
+    return findBySelectors(SEND_BUTTON_SELECTORS);
   }
 
   function setReactInputValue(input, value) {
     const prototype = Object.getPrototypeOf(input);
     const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+
     if (descriptor?.set) {
       descriptor.set.call(input, value);
     } else {
@@ -47,17 +45,48 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  function waitForInput(timeoutMs = 8000) {
+    const existing = findInputElement();
+    if (existing) {
+      return Promise.resolve(existing);
+    }
+
+    return new Promise((resolve, reject) => {
+      const observer = new MutationObserver(() => {
+        const input = findInputElement();
+        if (!input) {
+          return;
+        }
+
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve(input);
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+
+      const timer = setTimeout(() => {
+        observer.disconnect();
+        reject(new Error('chat_input_not_found'));
+      }, timeoutMs);
+    });
+  }
+
   async function insertAndSendOnCurrentPage(memoText) {
     if (!location.hostname.includes(NOTEBOOK_HOST)) {
       throw new Error('not_notebooklm_page');
     }
 
-    const input = findInputElement();
-    if (!input) {
-      throw new Error('chat_input_not_found');
+    const text = String(memoText || '').trim();
+    if (!text) {
+      throw new Error('empty_memo');
     }
 
-    setReactInputValue(input, memoText);
+    const input = await waitForInput();
+    setReactInputValue(input, text);
 
     const sendButton = findSendButton();
     if (sendButton) {
@@ -73,64 +102,15 @@
       })
     );
 
+    input.dispatchEvent(
+      new KeyboardEvent('keyup', {
+        bubbles: true,
+        key: 'Enter',
+        code: 'Enter'
+      })
+    );
+
     return { ok: true, method: 'enter' };
-  }
-
-  async function queryNotebookTab() {
-    if (!chrome?.tabs?.query) {
-      return null;
-    }
-
-    const tabs = await chrome.tabs.query({
-      url: [`*://${NOTEBOOK_HOST}/*`]
-    });
-
-    if (!tabs.length) {
-      return null;
-    }
-
-    const activeTab = tabs.find((tab) => tab.active);
-    return activeTab || tabs[0];
-  }
-
-  async function openNotebookTab(notebookUrl) {
-    if (!chrome?.tabs?.create) {
-      window.open(notebookUrl || DEFAULT_NOTEBOOK_URL, '_blank', 'noopener');
-      return null;
-    }
-
-    return chrome.tabs.create({ url: notebookUrl || DEFAULT_NOTEBOOK_URL, active: true });
-  }
-
-  async function sendToNotebookTab(tabId, memoText) {
-    if (!chrome?.tabs?.sendMessage) {
-      return { ok: false, reason: 'tabs_sendMessage_unavailable' };
-    }
-
-    return chrome.tabs.sendMessage(tabId, {
-      type: 'NOTEBOOKLM_CAPTURE_INSERT_AND_SEND',
-      payload: { memoText }
-    });
-  }
-
-  async function sendMemo(memoText, notebookUrl) {
-    const text = (memoText || '').trim();
-    if (!text) {
-      return { ok: false, reason: 'empty_memo' };
-    }
-
-    if (location.hostname.includes(NOTEBOOK_HOST)) {
-      return insertAndSendOnCurrentPage(text);
-    }
-
-    const targetTab = await queryNotebookTab();
-    if (!targetTab) {
-      await openNotebookTab(notebookUrl);
-      return { ok: false, reason: 'notebook_tab_missing_opened' };
-    }
-
-    const response = await sendToNotebookTab(targetTab.id, text);
-    return response || { ok: true };
   }
 
   chrome?.runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
@@ -140,18 +120,17 @@
 
     insertAndSendOnCurrentPage(message.payload?.memoText || '')
       .then((result) => sendResponse(result))
-      .catch((error) =>
+      .catch((error) => {
         sendResponse({
           ok: false,
           reason: error?.message || 'send_failed'
-        })
-      );
+        });
+      });
 
     return true;
   });
 
   window.NotebookLMCaptureSender = {
-    sendMemo,
     insertAndSendOnCurrentPage
   };
 })();

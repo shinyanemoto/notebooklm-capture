@@ -95,6 +95,12 @@
   const tags = document.createElement('div');
   tags.className = 'nlm-capture-tags';
 
+  const statusLine = document.createElement('div');
+  statusLine.style.marginTop = '8px';
+  statusLine.style.fontSize = '12px';
+  statusLine.style.minHeight = '16px';
+  statusLine.style.color = '#0b57d0';
+
   TAG_OPTIONS.forEach((tag) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -117,37 +123,80 @@
   sendButton.className = 'nlm-capture-send';
   sendButton.textContent = 'Send';
 
-  sendButton.addEventListener('click', () => {
+  async function requestSend(detail) {
+    if (!chrome?.runtime?.sendMessage) {
+      return { ok: false, reason: 'runtime_unavailable' };
+    }
+
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        {
+          type: 'NOTEBOOKLM_CAPTURE_SEND_REQUEST',
+          payload: detail
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, reason: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(response || { ok: false, reason: 'no_response' });
+        }
+      );
+    });
+  }
+
+  function resetTagsUI() {
+    STATE.tags.clear();
+    tags.querySelectorAll('.nlm-capture-tag.active').forEach((el) => {
+      el.classList.remove('active');
+    });
+  }
+
+  sendButton.addEventListener('click', async () => {
     const memo = textarea.value.trim();
     if (!memo) {
       textarea.focus();
       return;
     }
 
+    const context = window.NotebookLMCaptureContextExtractor?.extractContext?.() || {
+      timestamp: new Date().toISOString(),
+      title: document.title || '',
+      url: location.href,
+      hostname: location.hostname
+    };
+
     const detail = {
       memo,
-      tags: Array.from(STATE.tags)
+      tags: Array.from(STATE.tags),
+      context
     };
 
     window.dispatchEvent(
       new CustomEvent('notebooklm-capture:send', { detail })
     );
 
-    if (chrome?.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({
-        type: 'NOTEBOOKLM_CAPTURE_SEND_REQUEST',
-        payload: detail
-      });
+    sendButton.disabled = true;
+    statusLine.textContent = 'Sending...';
+    const response = await requestSend(detail);
+    sendButton.disabled = false;
+
+    if (response?.ok) {
+      statusLine.style.color = '#0b57d0';
+      statusLine.textContent = 'Sent to NotebookLM';
+      textarea.value = '';
+      resetTagsUI();
+      return;
     }
 
-    textarea.value = '';
-    STATE.tags.clear();
-    tags.querySelectorAll('.nlm-capture-tag.active').forEach((el) => {
-      el.classList.remove('active');
-    });
+    statusLine.style.color = '#c5221f';
+    statusLine.textContent = `Failed: ${response?.reason || 'send_failed'}`;
+    setTimeout(() => {
+      statusLine.style.color = '#0b57d0';
+    }, 1200);
   });
 
-  panel.append(textarea, tags, sendButton);
+  panel.append(textarea, tags, sendButton, statusLine);
 
   const toggleButton = document.createElement('button');
   toggleButton.type = 'button';
