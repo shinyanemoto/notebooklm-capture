@@ -28,7 +28,7 @@ function buildMessage(payload, context) {
     memo,
     '',
     'Tags:',
-    tags.length ? tags.join(' ') : '-',
+    tags.length ? tags.join(' ') : '(none)',
     '',
     'Source:',
     context?.title || '(untitled)',
