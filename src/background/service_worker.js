@@ -159,18 +159,36 @@ async function waitForNotebookTabReady(tabId, timeoutMs = 15000) {
 }
 
 async function sendToNotebookTab(tabId, memoText) {
-  return chrome.tabs.sendMessage(tabId, {
-    type: 'NOTEBOOKLM_CAPTURE_INSERT_AND_SEND',
-    payload: { memoText }
-  });
-}
+  if (!chrome.scripting?.executeScript) {
+    return chrome.tabs.sendMessage(tabId, {
+      type: 'NOTEBOOKLM_CAPTURE_INSERT_AND_SEND',
+      payload: { memoText }
+    });
+  }
 
-function isMissingReceiverError(error) {
-  const message = String(error?.message || '');
-  return (
-    message.includes('Receiving end does not exist') ||
-    message.includes('Could not establish connection')
-  );
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['src/content/notebook_sender.js']
+  });
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [memoText],
+    func: async (text) => {
+      const sender = window.NotebookLMCaptureSender;
+      if (!sender || typeof sender.insertAndSendOnCurrentPage !== 'function') {
+        return { ok: false, reason: 'sender_api_unavailable' };
+      }
+
+      try {
+        return await sender.insertAndSendOnCurrentPage(text);
+      } catch (error) {
+        return { ok: false, reason: error?.message || 'send_failed' };
+      }
+    }
+  });
+
+  return results?.[0]?.result || { ok: false, reason: 'send_result_missing' };
 }
 
 function isTabAccessError(error) {
@@ -206,9 +224,8 @@ async function ensureNotebookReceiver(tabId) {
 }
 
 async function sendWithRetry(tabId, memoText, openedNow) {
-  const maxAttempts = openedNow ? 6 : 3;
+  const maxAttempts = openedNow ? 8 : 4;
   let lastError = null;
-  let attemptedInjection = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -222,14 +239,6 @@ async function sendWithRetry(tabId, memoText, openedNow) {
 
       if (isTabAccessError(error)) {
         await waitForNotebookTabReady(tabId);
-      }
-
-      if (isMissingReceiverError(error) && !attemptedInjection) {
-        attemptedInjection = true;
-        const injected = await ensureNotebookReceiver(tabId);
-        if (!injected) {
-          await waitForNotebookTabReady(tabId);
-        }
       }
     }
     await delay(400 * attempt);
