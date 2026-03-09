@@ -3,6 +3,7 @@
 const NOTEBOOK_HOST = 'notebooklm.google.com';
 const DEFAULT_NOTEBOOK_URL = `https://${NOTEBOOK_HOST}/`;
 const LOG_STORAGE_KEY = 'captureLogs';
+const SETTINGS_STORAGE_KEY = 'settings';
 const MAX_LOGS = 500;
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -62,13 +63,32 @@ async function queryNotebookTabs() {
   });
 }
 
+function normalizeNotebookUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, '');
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function getConfiguredNotebookUrl() {
+  const result = await chrome.storage.local.get({ [SETTINGS_STORAGE_KEY]: {} });
+  const settings = result[SETTINGS_STORAGE_KEY] || {};
+  const notebooks = Array.isArray(settings.notebooks) ? settings.notebooks : [];
+
+  const firstValid = notebooks.find((item) => item && typeof item.url === 'string' && item.url.trim());
+  return firstValid ? firstValid.url.trim() : null;
+}
+
 function selectNotebookTab(tabs, preferredUrl) {
   if (!tabs.length) {
     return null;
   }
 
   if (preferredUrl) {
-    const exact = tabs.find((tab) => tab.url === preferredUrl);
+    const preferred = normalizeNotebookUrl(preferredUrl);
+    const exact = tabs.find((tab) => normalizeNotebookUrl(tab.url) === preferred);
     if (exact) {
       return exact;
     }
@@ -79,14 +99,15 @@ function selectNotebookTab(tabs, preferredUrl) {
 }
 
 async function ensureNotebookTab(preferredUrl) {
+  const configuredUrl = preferredUrl || (await getConfiguredNotebookUrl());
   const tabs = await queryNotebookTabs();
-  const existing = selectNotebookTab(tabs, preferredUrl);
+  const existing = selectNotebookTab(tabs, configuredUrl);
   if (existing) {
     return { tab: existing, opened: false };
   }
 
   const created = await chrome.tabs.create({
-    url: preferredUrl || DEFAULT_NOTEBOOK_URL,
+    url: configuredUrl || DEFAULT_NOTEBOOK_URL,
     active: true
   });
   return { tab: created, opened: true };
