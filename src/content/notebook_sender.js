@@ -169,6 +169,70 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  function getInputText(input) {
+    if (input.isContentEditable) {
+      return (input.textContent || '').trim();
+    }
+    return String(input.value || '').trim();
+  }
+
+  async function waitFor(conditionFn, timeoutMs = 2000, intervalMs = 80) {
+    const startAt = Date.now();
+    while (Date.now() - startAt < timeoutMs) {
+      if (conditionFn()) {
+        return true;
+      }
+      await delay(intervalMs);
+    }
+    return false;
+  }
+
+  async function waitForTextApplied(input, text) {
+    return waitFor(() => getInputText(input) === text, 1500, 60);
+  }
+
+  async function waitForSent(input) {
+    return waitFor(() => getInputText(input) === '', 2500, 90);
+  }
+
+  function triggerEnterSend(input) {
+    input.focus();
+
+    const eventInit = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13
+    };
+
+    input.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+    input.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+    input.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+  }
+
+  async function triggerSendAndConfirm(composer) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const sendButton = findBestSendButton(composer.input);
+      if (sendButton && !sendButton.disabled && sendButton.getAttribute('aria-disabled') !== 'true') {
+        sendButton.click();
+        if (await waitForSent(composer.input)) {
+          return { ok: true, method: 'button' };
+        }
+      }
+      await delay(120);
+    }
+
+    triggerEnterSend(composer.input);
+    if (await waitForSent(composer.input)) {
+      return { ok: true, method: 'enter' };
+    }
+
+    throw new Error('send_not_confirmed');
+  }
+
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -203,29 +267,9 @@
 
     const composer = await waitForComposer();
     setReactInputValue(composer.input, text);
+    await waitForTextApplied(composer.input, text);
 
-    if (composer.sendButton) {
-      composer.sendButton.click();
-      return { ok: true, method: 'button' };
-    }
-
-    composer.input.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        bubbles: true,
-        key: 'Enter',
-        code: 'Enter'
-      })
-    );
-
-    composer.input.dispatchEvent(
-      new KeyboardEvent('keyup', {
-        bubbles: true,
-        key: 'Enter',
-        code: 'Enter'
-      })
-    );
-
-    return { ok: true, method: 'enter' };
+    return triggerSendAndConfirm(composer);
   }
 
   chrome?.runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
