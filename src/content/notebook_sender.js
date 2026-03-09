@@ -8,11 +8,17 @@
 
   const NOTEBOOK_HOST = 'notebooklm.google.com';
   const INPUT_SELECTORS = [
+    'textarea[aria-label*="chat" i]',
+    'textarea[aria-label*="message" i]',
+    'textarea[aria-label*="入力" i]',
+    'textarea[placeholder*="chat" i]',
+    'textarea[placeholder*="message" i]',
+    'textarea[placeholder*="入力" i]',
+    'textarea[placeholder*="開始" i]',
     'textarea',
     'div[contenteditable="true"][role="textbox"]',
     '[role="textbox"][contenteditable="true"]',
-    'div[contenteditable="true"]',
-    'input[type="text"]'
+    'div[contenteditable="true"]'
   ];
   const SEND_BUTTON_SELECTORS = [
     'button[aria-label*="send" i]',
@@ -64,6 +70,7 @@
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
 
     let score = 0;
 
@@ -71,12 +78,16 @@
       score += 2;
     }
 
-    if (rect.bottom >= viewportHeight * 0.55) {
-      score += 3;
+    if (rect.bottom >= viewportHeight * 0.7) {
+      score += 8;
+    } else if (centerY <= viewportHeight * 0.5) {
+      score -= 5;
     }
 
     if (centerX >= viewportWidth * 0.25 && centerX <= viewportWidth * 0.75) {
       score += 4;
+    } else if (centerX <= viewportWidth * 0.35) {
+      score -= 6;
     }
 
     const hint = `${element.getAttribute('aria-label') || ''} ${element.getAttribute('placeholder') || ''}`;
@@ -86,6 +97,11 @@
 
     if (element.closest('form')) {
       score += 1;
+    }
+
+    const nearSend = findBestSendButton(element);
+    if (nearSend) {
+      score += 10;
     }
 
     return score;
@@ -214,9 +230,22 @@
   }
 
   async function triggerSendAndConfirm(composer) {
+    await waitFor(
+      () => {
+        const button = findBestSendButton(composer.input);
+        return (
+          !button ||
+          (!button.disabled && button.getAttribute('aria-disabled') !== 'true')
+        );
+      },
+      1800,
+      90
+    );
+
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const sendButton = findBestSendButton(composer.input);
       if (sendButton && !sendButton.disabled && sendButton.getAttribute('aria-disabled') !== 'true') {
+        await delay(140);
         sendButton.click();
         if (await waitForSent(composer.input)) {
           return { ok: true, method: 'button' };
