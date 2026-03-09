@@ -99,15 +99,23 @@ function selectNotebookTab(tabs, preferredUrl) {
 }
 
 async function ensureNotebookTab(preferredUrl) {
-  const configuredUrl = preferredUrl || (await getConfiguredNotebookUrl());
+  const configuredUrl = sanitizeNotebookUrl(preferredUrl) || sanitizeNotebookUrl(await getConfiguredNotebookUrl());
+  const fallbackUrl = configuredUrl || DEFAULT_NOTEBOOK_URL;
   const tabs = await queryNotebookTabs();
   const existing = selectNotebookTab(tabs, configuredUrl);
   if (existing) {
+    if (!isNotebookUrl(existing.url) && existing.id) {
+      const updated = await chrome.tabs.update(existing.id, {
+        url: fallbackUrl,
+        active: true
+      });
+      return { tab: updated, opened: false };
+    }
     return { tab: existing, opened: false };
   }
 
   const created = await chrome.tabs.create({
-    url: configuredUrl || DEFAULT_NOTEBOOK_URL,
+    url: fallbackUrl,
     active: true
   });
   return { tab: created, opened: true };
@@ -125,6 +133,13 @@ function isNotebookUrl(url) {
   }
 }
 
+function sanitizeNotebookUrl(url) {
+  if (!url || !isNotebookUrl(url)) {
+    return null;
+  }
+  return url;
+}
+
 async function waitForNotebookTabReady(tabId, timeoutMs = 15000) {
   const startAt = Date.now();
 
@@ -132,7 +147,7 @@ async function waitForNotebookTabReady(tabId, timeoutMs = 15000) {
     try {
       const tab = await chrome.tabs.get(tabId);
       if (isNotebookUrl(tab.url) && tab.status === 'complete') {
-        return tab;
+        return true;
       }
     } catch (_error) {
       // Tab can be temporarily unavailable during navigation.
@@ -140,7 +155,7 @@ async function waitForNotebookTabReady(tabId, timeoutMs = 15000) {
     await delay(300);
   }
 
-  throw new Error('notebook_tab_not_ready');
+  return false;
 }
 
 async function sendToNotebookTab(tabId, memoText) {
@@ -206,16 +221,15 @@ async function sendWithRetry(tabId, memoText, openedNow) {
       lastError = error;
 
       if (isTabAccessError(error)) {
-        try {
-          await waitForNotebookTabReady(tabId);
-        } catch (readyError) {
-          lastError = readyError;
-        }
+        await waitForNotebookTabReady(tabId);
       }
 
       if (isMissingReceiverError(error) && !attemptedInjection) {
         attemptedInjection = true;
-        await ensureNotebookReceiver(tabId);
+        const injected = await ensureNotebookReceiver(tabId);
+        if (!injected) {
+          await waitForNotebookTabReady(tabId);
+        }
       }
     }
     await delay(400 * attempt);
@@ -261,7 +275,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         throw new Error('notebook_tab_unavailable');
       }
 
-      await waitForNotebookTabReady(tab.id);
+      await waitForNotebookTabReady(tab.id, opened ? 25000 : 10000);
       const result = await sendWithRetry(tab.id, memoText, opened);
       await addCaptureLog({
         memo,
