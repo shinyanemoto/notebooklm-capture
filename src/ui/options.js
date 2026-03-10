@@ -2,6 +2,7 @@
 
 (() => {
   const store = window.NotebookLMCaptureSettingsStore;
+  const logStore = window.NotebookLMCaptureLogStore;
 
   function parseNotebooks(rawText) {
     return rawText
@@ -47,6 +48,38 @@
     }, 2000);
   }
 
+  function buildLogFilename() {
+    const iso = new Date().toISOString().replace(/[:.]/g, '-');
+    return `notebooklm-capture-logs-${iso}.json`;
+  }
+
+  function triggerDownload(filename, content) {
+    const blob = new Blob([content], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadLogs() {
+    const logs = await logStore.getLogs();
+    if (!logs.length) {
+      showStatus('No logs to download');
+      return;
+    }
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      count: logs.length,
+      logs
+    };
+
+    triggerDownload(buildLogFilename(), `${JSON.stringify(payload, null, 2)}\n`);
+    showStatus(`Downloaded ${logs.length} logs`);
+  }
+
   async function load() {
     const settings = await store.getSettings();
 
@@ -88,6 +121,7 @@
   document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('save').addEventListener('click', save);
     document.getElementById('reset').addEventListener('click', reset);
+    document.getElementById('downloadLogs').addEventListener('click', downloadLogs);
     await load();
   });
 })();
