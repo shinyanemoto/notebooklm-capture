@@ -24,6 +24,9 @@ function buildMessage(payload, context) {
   const lines = [
     '[Capture]',
     '',
+    'Instruction:',
+    'この投稿は蓄積メモです。返信は不要です。',
+    '',
     'Memo:',
     memo,
     '',
