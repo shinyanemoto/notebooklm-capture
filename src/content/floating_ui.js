@@ -10,7 +10,7 @@
     tags: new Set()
   };
 
-  const TAG_OPTIONS = ['todo', 'research', 'idea'];
+  const DEFAULT_TAG_OPTIONS = ['todo', 'research', 'idea'];
 
   const style = document.createElement('style');
   style.textContent = `
@@ -101,21 +101,57 @@
   statusLine.style.minHeight = '16px';
   statusLine.style.color = '#0b57d0';
 
-  TAG_OPTIONS.forEach((tag) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'nlm-capture-tag';
-    button.textContent = tag;
-    button.addEventListener('click', () => {
-      if (STATE.tags.has(tag)) {
-        STATE.tags.delete(tag);
-        button.classList.remove('active');
-      } else {
-        STATE.tags.add(tag);
-        button.classList.add('active');
-      }
+  function normalizeTagPresets(rawValue) {
+    if (!Array.isArray(rawValue)) {
+      return DEFAULT_TAG_OPTIONS.slice();
+    }
+
+    const normalized = rawValue
+      .map((tag) => String(tag).trim())
+      .filter(Boolean);
+
+    return normalized.length ? normalized : DEFAULT_TAG_OPTIONS.slice();
+  }
+
+  function renderTagButtons(tagOptions) {
+    STATE.tags.clear();
+    tags.innerHTML = '';
+
+    tagOptions.forEach((tag) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'nlm-capture-tag';
+      button.textContent = tag;
+      button.addEventListener('click', () => {
+        if (STATE.tags.has(tag)) {
+          STATE.tags.delete(tag);
+          button.classList.remove('active');
+        } else {
+          STATE.tags.add(tag);
+          button.classList.add('active');
+        }
+      });
+      tags.appendChild(button);
     });
-    tags.appendChild(button);
+  }
+
+  async function loadTagButtonsFromSettings() {
+    if (!chrome?.storage?.local?.get) {
+      renderTagButtons(DEFAULT_TAG_OPTIONS);
+      return;
+    }
+
+    const result = await chrome.storage.local.get({
+      settings: { tagPresets: DEFAULT_TAG_OPTIONS }
+    });
+
+    const tagOptions = normalizeTagPresets(result?.settings?.tagPresets);
+    renderTagButtons(tagOptions);
+  }
+
+  renderTagButtons(DEFAULT_TAG_OPTIONS);
+  loadTagButtonsFromSettings().catch(() => {
+    renderTagButtons(DEFAULT_TAG_OPTIONS);
   });
 
   const sendButton = document.createElement('button');
