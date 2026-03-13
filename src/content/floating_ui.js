@@ -181,12 +181,17 @@
     }
 
     return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        resolve({ ok: false, reason: 'send_timeout' });
+      }, 15000);
+
       chrome.runtime.sendMessage(
         {
           type: 'NOTEBOOKLM_CAPTURE_SEND_REQUEST',
           payload: detail
         },
         (response) => {
+          clearTimeout(timer);
           if (chrome.runtime.lastError) {
             resolve({ ok: false, reason: chrome.runtime.lastError.message });
             return;

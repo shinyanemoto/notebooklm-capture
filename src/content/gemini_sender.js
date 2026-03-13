@@ -8,6 +8,9 @@
 
   const GEMINI_HOST = 'gemini.google.com';
   const INPUT_SELECTORS = [
+    'div[contenteditable="true"].ql-editor',
+    '[aria-label*="Enter a prompt" i]',
+    '[aria-label*="Prompt" i]',
     'textarea[aria-label*="prompt" i]',
     'textarea[aria-label*="message" i]',
     'textarea[placeholder*="prompt" i]',
@@ -19,6 +22,7 @@
   ];
   const SEND_BUTTON_SELECTORS = [
     'button[aria-label*="send" i]',
+    'button[aria-label*="run" i]',
     'button[aria-label*="submit" i]',
     'button[data-test-id*="send" i]',
     'button[mattooltip*="Send" i]',
@@ -35,20 +39,57 @@
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
   }
 
+  function getSearchRoots() {
+    const roots = [document];
+    const queue = [document];
+    const seen = new Set([document]);
+
+    while (queue.length) {
+      const root = queue.shift();
+      const elements = root.querySelectorAll ? root.querySelectorAll('*') : [];
+
+      elements.forEach((element) => {
+        if (!element.shadowRoot || seen.has(element.shadowRoot)) {
+          return;
+        }
+        seen.add(element.shadowRoot);
+        roots.push(element.shadowRoot);
+        queue.push(element.shadowRoot);
+      });
+    }
+
+    return roots;
+  }
+
+  function queryAllDeep(selectors) {
+    const matches = [];
+    const roots = getSearchRoots();
+
+    roots.forEach((root) => {
+      selectors.forEach((selector) => {
+        root.querySelectorAll(selector).forEach((element) => {
+          if (!matches.includes(element)) {
+            matches.push(element);
+          }
+        });
+      });
+    });
+
+    return matches;
+  }
+
   function getEditableCandidates() {
     const candidates = [];
 
-    for (const selector of INPUT_SELECTORS) {
-      document.querySelectorAll(selector).forEach((element) => {
-        if (!isVisible(element) || element.disabled || element.readOnly) {
-          return;
-        }
+    queryAllDeep(INPUT_SELECTORS).forEach((element) => {
+      if (!isVisible(element) || element.disabled || element.readOnly) {
+        return;
+      }
 
-        if (!candidates.includes(element)) {
-          candidates.push(element);
-        }
-      });
-    }
+      if (!candidates.includes(element)) {
+        candidates.push(element);
+      }
+    });
 
     return candidates;
   }
@@ -56,21 +97,19 @@
   function getSendButtons() {
     const buttons = [];
 
-    for (const selector of SEND_BUTTON_SELECTORS) {
-      document.querySelectorAll(selector).forEach((button) => {
-        if (!isVisible(button)) {
-          return;
-        }
+    queryAllDeep(SEND_BUTTON_SELECTORS).forEach((button) => {
+      if (!isVisible(button)) {
+        return;
+      }
 
-        if (button.disabled || button.getAttribute('aria-disabled') === 'true') {
-          return;
-        }
+      if (button.disabled || button.getAttribute('aria-disabled') === 'true') {
+        return;
+      }
 
-        if (!buttons.includes(button)) {
-          buttons.push(button);
-        }
-      });
-    }
+      if (!buttons.includes(button)) {
+        buttons.push(button);
+      }
+    });
 
     return buttons;
   }
@@ -121,6 +160,9 @@
     if (/prompt|message|chat|ask/i.test(hint)) {
       score += 5;
     }
+    if (element.classList?.contains('ql-editor')) {
+      score += 10;
+    }
     if (element.closest('form')) {
       score += 2;
     }
@@ -144,7 +186,9 @@
   function setReactInputValue(input, value) {
     if (input.isContentEditable) {
       input.focus();
+      input.innerHTML = '';
       input.textContent = value;
+      input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, data: value, inputType: 'insertText' }));
       input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
       return;
