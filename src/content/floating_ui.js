@@ -243,6 +243,13 @@
     return `${value.slice(0, 45)}...`;
   }
 
+  function buildGeminiOptionLabel(tab, index) {
+    const numberLabel = `Gemini ${index + 1}`;
+    const stateLabel = tab.active ? 'Current' : numberLabel;
+    const hintSource = tab.pathHint || tab.title || tab.url || `tab-${tab.id}`;
+    return truncateLabel(`${stateLabel} | ${hintSource}`);
+  }
+
   async function refreshGeminiTabOptions() {
     const tabs = await requestGeminiTabs();
     geminiTargetSelect.innerHTML = '';
@@ -252,10 +259,10 @@
     autoOption.textContent = tabs.length ? 'Auto select Gemini tab' : 'Auto select Gemini tab (none open)';
     geminiTargetSelect.appendChild(autoOption);
 
-    tabs.forEach((tab) => {
+    tabs.forEach((tab, index) => {
       const option = document.createElement('option');
       option.value = String(tab.id);
-      option.textContent = truncateLabel(tab.title || tab.url || `Gemini tab ${tab.id}`);
+      option.textContent = buildGeminiOptionLabel(tab, index);
       geminiTargetSelect.appendChild(option);
     });
 

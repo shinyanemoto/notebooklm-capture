@@ -112,10 +112,21 @@ async function getConfiguredNotebookUrl() {
 }
 
 function formatTabLabel(tab) {
+  let pathHint = '';
+  try {
+    const parsed = new URL(tab.url || '');
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    pathHint = segments.length ? segments[segments.length - 1] : parsed.hostname;
+  } catch (_error) {
+    pathHint = '';
+  }
+
   return {
     id: tab.id,
     title: tab.title || '',
-    url: tab.url || ''
+    url: tab.url || '',
+    active: Boolean(tab.active),
+    pathHint
   };
 }
 
