@@ -344,6 +344,26 @@ async function ensureGeminiTab() {
   return { tab: created, opened: true, targetUrl: DEFAULT_GEMINI_URL };
 }
 
+async function activateTab(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (typeof tab.windowId === 'number') {
+    await chrome.windows.update(tab.windowId, { focused: true });
+  }
+  return chrome.tabs.update(tabId, { active: true });
+}
+
+async function restoreSourceTab(sourceTabId) {
+  if (!sourceTabId) {
+    return;
+  }
+
+  try {
+    await activateTab(sourceTabId);
+  } catch (_error) {
+    // Source tab may be gone; no restore needed.
+  }
+}
+
 async function sendWithRetry(tabId, memoText, openedNow, targetUrl, options) {
   const maxAttempts = openedNow ? 8 : 4;
   let lastError = null;
@@ -423,8 +443,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         throw new Error(`${target}_tab_unavailable`);
       }
 
-      await route.waitUntilReady(tab.id, opened ? 25000 : 10000);
-      const result = await sendWithRetry(tab.id, memoText, opened, targetUrl, route);
+      const sourceTabId = sender.tab?.id ?? null;
+      const shouldActivateTarget = target === 'gemini' && sourceTabId !== null && sourceTabId !== tab.id;
+
+      let result;
+      try {
+        if (shouldActivateTarget) {
+          await activateTab(tab.id);
+          await delay(500);
+        }
+
+        await route.waitUntilReady(tab.id, opened ? 25000 : 10000);
+        result = await sendWithRetry(tab.id, memoText, opened, targetUrl, route);
+      } finally {
+        if (shouldActivateTarget) {
+          await delay(300);
+          await restoreSourceTab(sourceTabId);
+        }
+      }
+
       await addCaptureLog({
         target,
         memo,
