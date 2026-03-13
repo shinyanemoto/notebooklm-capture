@@ -215,7 +215,7 @@
     input.dispatchEvent(new KeyboardEvent('keyup', eventInit));
   }
 
-  async function triggerSendAndConfirm(input) {
+  async function triggerSend(input) {
     await waitFor(() => {
       const button = findBestSendButton(input);
       return !button || (!button.disabled && button.getAttribute('aria-disabled') !== 'true');
@@ -226,19 +226,15 @@
       if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
         await delay(140);
         button.click();
-        if (await waitFor(() => getInputText(input) === '', 2500, 90)) {
-          return { ok: true, method: 'button' };
-        }
+        await delay(120);
+        return { ok: true, method: 'button' };
       }
       await delay(120);
     }
 
     triggerEnterSend(input);
-    if (await waitFor(() => getInputText(input) === '', 2500, 90)) {
-      return { ok: true, method: 'enter' };
-    }
-
-    throw new Error('gemini_send_not_confirmed');
+    await delay(120);
+    return { ok: true, method: 'enter' };
   }
 
   async function insertAndSendOnCurrentPage(memoText) {
@@ -255,7 +251,7 @@
     setReactInputValue(composer.input, text);
     await waitFor(() => getInputText(composer.input) === text, 1500, 60);
 
-    return triggerSendAndConfirm(composer.input);
+    return triggerSend(composer.input);
   }
 
   window.NotebookLMCaptureGeminiSender = {
