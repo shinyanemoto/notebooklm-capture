@@ -89,6 +89,16 @@
     .nlm-capture-send.gemini {
       background: #1a73e8;
     }
+    .nlm-capture-target-select {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid #d0d0d0;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 12px;
+    }
   `;
 
   const root = document.createElement('div');
@@ -102,6 +112,10 @@
 
   const tags = document.createElement('div');
   tags.className = 'nlm-capture-tags';
+
+  const geminiTargetSelect = document.createElement('select');
+  geminiTargetSelect.className = 'nlm-capture-target-select';
+  geminiTargetSelect.style.display = 'none';
 
   const statusLine = document.createElement('div');
   statusLine.style.marginTop = '8px';
@@ -202,6 +216,52 @@
     });
   }
 
+  async function requestGeminiTabs() {
+    if (!chrome?.runtime?.sendMessage) {
+      return [];
+    }
+
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: 'NOTEBOOKLM_CAPTURE_LIST_GEMINI_TABS' },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            resolve([]);
+            return;
+          }
+          resolve(Array.isArray(response?.tabs) ? response.tabs : []);
+        }
+      );
+    });
+  }
+
+  function truncateLabel(text) {
+    const value = String(text || '').trim();
+    if (value.length <= 48) {
+      return value;
+    }
+    return `${value.slice(0, 45)}...`;
+  }
+
+  async function refreshGeminiTabOptions() {
+    const tabs = await requestGeminiTabs();
+    geminiTargetSelect.innerHTML = '';
+
+    const autoOption = document.createElement('option');
+    autoOption.value = '';
+    autoOption.textContent = tabs.length ? 'Auto select Gemini tab' : 'Auto select Gemini tab (none open)';
+    geminiTargetSelect.appendChild(autoOption);
+
+    tabs.forEach((tab) => {
+      const option = document.createElement('option');
+      option.value = String(tab.id);
+      option.textContent = truncateLabel(tab.title || tab.url || `Gemini tab ${tab.id}`);
+      geminiTargetSelect.appendChild(option);
+    });
+
+    geminiTargetSelect.style.display = 'block';
+  }
+
   function resetTagsUI() {
     STATE.tags.clear();
     tags.querySelectorAll('.nlm-capture-tag.active').forEach((el) => {
@@ -234,6 +294,10 @@
       context,
       target
     };
+
+    if (target === 'gemini' && geminiTargetSelect.value) {
+      detail.geminiTabId = Number(geminiTargetSelect.value);
+    }
 
     window.dispatchEvent(
       new CustomEvent('notebooklm-capture:send', { detail })
@@ -269,14 +333,17 @@
 
   sendRow.append(notebookSendButton, geminiSendButton);
 
-  panel.append(textarea, tags, sendRow, statusLine);
+  panel.append(textarea, tags, geminiTargetSelect, sendRow, statusLine);
 
   const toggleButton = document.createElement('button');
   toggleButton.type = 'button';
   toggleButton.className = 'nlm-capture-button';
   toggleButton.textContent = 'Memo';
-  toggleButton.addEventListener('click', () => {
-    panel.classList.toggle('open');
+  toggleButton.addEventListener('click', async () => {
+    const isOpen = panel.classList.toggle('open');
+    if (isOpen) {
+      await refreshGeminiTabOptions();
+    }
   });
 
   root.append(panel, toggleButton);

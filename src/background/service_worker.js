@@ -111,6 +111,14 @@ async function getConfiguredNotebookUrl() {
   return firstValid ? firstValid.url.trim() : null;
 }
 
+function formatTabLabel(tab) {
+  return {
+    id: tab.id,
+    title: tab.title || '',
+    url: tab.url || ''
+  };
+}
+
 function selectNotebookTab(tabs, preferredUrl) {
   if (!tabs.length) {
     return null;
@@ -323,8 +331,21 @@ function selectGeminiTab(tabs) {
   return active || tabs[0];
 }
 
-async function ensureGeminiTab() {
+async function ensureGeminiTab(options = {}) {
+  const preferredTabId = Number.isInteger(options.preferredTabId) ? options.preferredTabId : null;
   const tabs = await queryGeminiTabs();
+
+  if (preferredTabId !== null) {
+    const preferredTab = tabs.find((tab) => tab.id === preferredTabId);
+    if (preferredTab) {
+      return {
+        tab: preferredTab,
+        opened: false,
+        targetUrl: preferredTab.url || DEFAULT_GEMINI_URL
+      };
+    }
+  }
+
   const existing = selectGeminiTab(tabs);
   if (existing) {
     if (!isGeminiUrl(existing.url) && existing.id) {
@@ -404,6 +425,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === 'NOTEBOOKLM_CAPTURE_LIST_GEMINI_TABS') {
+    queryGeminiTabs()
+      .then((tabs) => {
+        sendResponse({
+          ok: true,
+          tabs: tabs.map(formatTabLabel)
+        });
+      })
+      .catch(() => {
+        sendResponse({
+          ok: false,
+          tabs: []
+        });
+      });
+    return true;
+  }
+
   if (message.type === 'NOTEBOOKLM_CAPTURE_PING') {
     sendResponse({ ok: true, from: 'service_worker', senderTabId: sender.tab?.id ?? null });
     return true;
@@ -421,8 +459,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   const context = payload.context || {};
-  const memoText = buildMessage(payload, context);
   const target = payload.target === 'gemini' ? 'gemini' : 'notebooklm';
+  const memoText = target === 'gemini'
+    ? memo
+    : buildMessage(payload, context);
   const route = target === 'gemini'
     ? {
         ensureTab: ensureGeminiTab,
@@ -437,7 +477,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         recover: recoverNotebookTab
       };
 
-  route.ensureTab(payload.notebookUrl)
+  const ensureOptions = target === 'gemini'
+    ? { preferredTabId: Number.isInteger(payload.geminiTabId) ? payload.geminiTabId : null }
+    : payload.notebookUrl;
+
+  route.ensureTab(ensureOptions)
     .then(async ({ tab, opened, targetUrl }) => {
       if (!tab?.id) {
         throw new Error(`${target}_tab_unavailable`);
