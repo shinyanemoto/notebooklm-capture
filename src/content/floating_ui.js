@@ -72,7 +72,7 @@
       border-color: #0b57d0;
     }
     .nlm-capture-send {
-      width: 100%;
+      flex: 1 1 0;
       border: none;
       border-radius: 8px;
       background: #0b57d0;
@@ -80,6 +80,14 @@
       padding: 8px;
       cursor: pointer;
       font-weight: 600;
+    }
+    .nlm-capture-send-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .nlm-capture-send.gemini {
+      background: #1a73e8;
     }
   `;
 
@@ -154,10 +162,18 @@
     renderTagButtons(DEFAULT_TAG_OPTIONS);
   });
 
-  const sendButton = document.createElement('button');
-  sendButton.type = 'button';
-  sendButton.className = 'nlm-capture-send';
-  sendButton.textContent = 'Send';
+  const sendRow = document.createElement('div');
+  sendRow.className = 'nlm-capture-send-row';
+
+  const notebookSendButton = document.createElement('button');
+  notebookSendButton.type = 'button';
+  notebookSendButton.className = 'nlm-capture-send';
+  notebookSendButton.textContent = 'Send to NotebookLM';
+
+  const geminiSendButton = document.createElement('button');
+  geminiSendButton.type = 'button';
+  geminiSendButton.className = 'nlm-capture-send gemini';
+  geminiSendButton.textContent = 'Send to Gemini';
 
   async function requestSend(detail) {
     if (!chrome?.runtime?.sendMessage) {
@@ -188,7 +204,12 @@
     });
   }
 
-  sendButton.addEventListener('click', async () => {
+  function setSendingState(isSending) {
+    notebookSendButton.disabled = isSending;
+    geminiSendButton.disabled = isSending;
+  }
+
+  async function handleSend(target) {
     const memo = textarea.value.trim();
     if (!memo) {
       textarea.focus();
@@ -205,21 +226,22 @@
     const detail = {
       memo,
       tags: Array.from(STATE.tags),
-      context
+      context,
+      target
     };
 
     window.dispatchEvent(
       new CustomEvent('notebooklm-capture:send', { detail })
     );
 
-    sendButton.disabled = true;
+    setSendingState(true);
     statusLine.textContent = 'Sending...';
     const response = await requestSend(detail);
-    sendButton.disabled = false;
+    setSendingState(false);
 
     if (response?.ok) {
       statusLine.style.color = '#0b57d0';
-      statusLine.textContent = 'Sent to NotebookLM';
+      statusLine.textContent = target === 'gemini' ? 'Sent to Gemini' : 'Sent to NotebookLM';
       textarea.value = '';
       resetTagsUI();
       return;
@@ -230,9 +252,19 @@
     setTimeout(() => {
       statusLine.style.color = '#0b57d0';
     }, 1200);
+  }
+
+  notebookSendButton.addEventListener('click', () => {
+    handleSend('notebooklm');
   });
 
-  panel.append(textarea, tags, sendButton, statusLine);
+  geminiSendButton.addEventListener('click', () => {
+    handleSend('gemini');
+  });
+
+  sendRow.append(notebookSendButton, geminiSendButton);
+
+  panel.append(textarea, tags, sendRow, statusLine);
 
   const toggleButton = document.createElement('button');
   toggleButton.type = 'button';

@@ -2,6 +2,8 @@
 
 const NOTEBOOK_HOST = 'notebooklm.google.com';
 const DEFAULT_NOTEBOOK_URL = `https://${NOTEBOOK_HOST}/`;
+const GEMINI_HOST = 'gemini.google.com';
+const DEFAULT_GEMINI_URL = `https://${GEMINI_HOST}/app`;
 const LOG_STORAGE_KEY = 'captureLogs';
 const SETTINGS_STORAGE_KEY = 'settings';
 const MAX_LOGS = 500;
@@ -63,6 +65,12 @@ function buildMessage(payload, context) {
 async function queryNotebookTabs() {
   return chrome.tabs.query({
     url: [`*://${NOTEBOOK_HOST}/*`]
+  });
+}
+
+async function queryGeminiTabs() {
+  return chrome.tabs.query({
+    url: [`*://${GEMINI_HOST}/*`]
   });
 }
 
@@ -157,6 +165,14 @@ function isNotebookUrl(url) {
   }
 }
 
+function isGeminiUrl(url) {
+  try {
+    return new URL(url).hostname.includes(GEMINI_HOST);
+  } catch (_error) {
+    return false;
+  }
+}
+
 function sanitizeNotebookUrl(url) {
   if (!url || !isNotebookUrl(url)) {
     return null;
@@ -164,13 +180,20 @@ function sanitizeNotebookUrl(url) {
   return url;
 }
 
-async function waitForNotebookTabReady(tabId, timeoutMs = 15000) {
+function sanitizeGeminiUrl(url) {
+  if (!url || !isGeminiUrl(url)) {
+    return null;
+  }
+  return url;
+}
+
+async function waitForTabReady(tabId, matcher, timeoutMs = 15000) {
   const startAt = Date.now();
 
   while (Date.now() - startAt < timeoutMs) {
     try {
       const tab = await chrome.tabs.get(tabId);
-      if (isNotebookUrl(tab.url) && tab.status === 'complete') {
+      if (matcher(tab.url) && tab.status === 'complete') {
         return true;
       }
     } catch (_error) {
@@ -182,24 +205,29 @@ async function waitForNotebookTabReady(tabId, timeoutMs = 15000) {
   return false;
 }
 
-async function sendToNotebookTab(tabId, memoText) {
+async function waitForNotebookTabReady(tabId, timeoutMs = 15000) {
+  return waitForTabReady(tabId, isNotebookUrl, timeoutMs);
+}
+
+async function waitForGeminiTabReady(tabId, timeoutMs = 15000) {
+  return waitForTabReady(tabId, isGeminiUrl, timeoutMs);
+}
+
+async function executeSenderScript(tabId, file, objectName, memoText) {
   if (!chrome.scripting?.executeScript) {
-    return chrome.tabs.sendMessage(tabId, {
-      type: 'NOTEBOOKLM_CAPTURE_INSERT_AND_SEND',
-      payload: { memoText }
-    });
+    return { ok: false, reason: 'scripting_unavailable' };
   }
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['src/content/notebook_sender.js']
+    files: [file]
   });
 
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    args: [memoText],
-    func: async (text) => {
-      const sender = window.NotebookLMCaptureSender;
+    args: [memoText, objectName],
+    func: async (text, senderName) => {
+      const sender = window[senderName];
       if (!sender || typeof sender.insertAndSendOnCurrentPage !== 'function') {
         return { ok: false, reason: 'sender_api_unavailable' };
       }
@@ -213,6 +241,24 @@ async function sendToNotebookTab(tabId, memoText) {
   });
 
   return results?.[0]?.result || { ok: false, reason: 'send_result_missing' };
+}
+
+async function sendToNotebookTab(tabId, memoText) {
+  return executeSenderScript(
+    tabId,
+    'src/content/notebook_sender.js',
+    'NotebookLMCaptureSender',
+    memoText
+  );
+}
+
+async function sendToGeminiTab(tabId, memoText) {
+  return executeSenderScript(
+    tabId,
+    'src/content/gemini_sender.js',
+    'NotebookLMCaptureGeminiSender',
+    memoText
+  );
 }
 
 function isTabAccessError(error) {
@@ -257,13 +303,54 @@ async function recoverNotebookTab(tabId, targetUrl) {
   await waitForNotebookTabReady(tabId, 25000);
 }
 
-async function sendWithRetry(tabId, memoText, openedNow, targetUrl) {
+async function recoverGeminiTab(tabId, targetUrl) {
+  const snapshot = await getTabSnapshot(tabId);
+  if (!isGeminiUrl(snapshot.url)) {
+    await chrome.tabs.update(tabId, {
+      url: sanitizeGeminiUrl(targetUrl) || DEFAULT_GEMINI_URL,
+      active: false
+    });
+  }
+  await waitForGeminiTabReady(tabId, 25000);
+}
+
+function selectGeminiTab(tabs) {
+  if (!tabs.length) {
+    return null;
+  }
+
+  const active = tabs.find((tab) => tab.active);
+  return active || tabs[0];
+}
+
+async function ensureGeminiTab() {
+  const tabs = await queryGeminiTabs();
+  const existing = selectGeminiTab(tabs);
+  if (existing) {
+    if (!isGeminiUrl(existing.url) && existing.id) {
+      const updated = await chrome.tabs.update(existing.id, {
+        url: DEFAULT_GEMINI_URL,
+        active: false
+      });
+      return { tab: updated, opened: false, targetUrl: DEFAULT_GEMINI_URL };
+    }
+    return { tab: existing, opened: false, targetUrl: existing.url || DEFAULT_GEMINI_URL };
+  }
+
+  const created = await chrome.tabs.create({
+    url: DEFAULT_GEMINI_URL,
+    active: false
+  });
+  return { tab: created, opened: true, targetUrl: DEFAULT_GEMINI_URL };
+}
+
+async function sendWithRetry(tabId, memoText, openedNow, targetUrl, options) {
   const maxAttempts = openedNow ? 8 : 4;
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await sendToNotebookTab(tabId, memoText);
+      const response = await options.send(tabId, memoText);
       if (response?.ok) {
         return response;
       }
@@ -272,11 +359,11 @@ async function sendWithRetry(tabId, memoText, openedNow, targetUrl) {
       lastError = await withTabContextError(error, tabId);
 
       if (isTabAccessError(error)) {
-        await waitForNotebookTabReady(tabId);
+        await options.waitUntilReady(tabId);
       }
 
       if (isHostPermissionError(error)) {
-        await recoverNotebookTab(tabId, targetUrl);
+        await options.recover(tabId, targetUrl);
       }
     }
     await delay(400 * attempt);
@@ -315,16 +402,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   const context = payload.context || {};
   const memoText = buildMessage(payload, context);
+  const target = payload.target === 'gemini' ? 'gemini' : 'notebooklm';
+  const route = target === 'gemini'
+    ? {
+        ensureTab: ensureGeminiTab,
+        waitUntilReady: waitForGeminiTabReady,
+        send: sendToGeminiTab,
+        recover: recoverGeminiTab
+      }
+    : {
+        ensureTab: ensureNotebookTab,
+        waitUntilReady: waitForNotebookTabReady,
+        send: sendToNotebookTab,
+        recover: recoverNotebookTab
+      };
 
-  ensureNotebookTab(payload.notebookUrl)
+  route.ensureTab(payload.notebookUrl)
     .then(async ({ tab, opened, targetUrl }) => {
       if (!tab?.id) {
-        throw new Error('notebook_tab_unavailable');
+        throw new Error(`${target}_tab_unavailable`);
       }
 
-      await waitForNotebookTabReady(tab.id, opened ? 25000 : 10000);
-      const result = await sendWithRetry(tab.id, memoText, opened, targetUrl);
+      await route.waitUntilReady(tab.id, opened ? 25000 : 10000);
+      const result = await sendWithRetry(tab.id, memoText, opened, targetUrl, route);
       await addCaptureLog({
+        target,
         memo,
         tags: normalizeTags(payload.tags),
         timestamp: context.timestamp || new Date().toISOString(),
@@ -339,7 +441,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ok: true,
         result,
         tabId: tab.id,
-        targetUrl
+        targetUrl,
+        target
       });
     })
     .catch((error) => {
