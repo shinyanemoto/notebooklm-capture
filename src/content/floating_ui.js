@@ -50,7 +50,10 @@
       opacity: 0.9;
     }
     .nlm-capture-panel {
-      width: 280px;
+      width: fit-content;
+      min-width: 280px;
+      max-width: calc(100vw - 32px);
+      box-sizing: border-box;
       margin-bottom: 10px;
       background: #fff;
       border: 1px solid #ddd;
@@ -63,9 +66,11 @@
       display: block;
     }
     .nlm-capture-panel textarea {
-      width: 100%;
+      width: 280px;
       box-sizing: border-box;
-      resize: vertical;
+      max-width: calc(100vw - 52px);
+      resize: both;
+      overflow: auto;
       min-height: 80px;
     }
     .nlm-capture-tags {
