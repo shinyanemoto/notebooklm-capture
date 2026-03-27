@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "NotebookLM Capture",
+  "version": "0.1.0",
+  "description": "Capture quick memos from any page and send to NotebookLM.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background/service_worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content/floating_ui.js",
+        "src/content/notebook_sender.js",
+        "src/content/context_extractor.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "src/ui/options.html",
+  "action": {
+    "default_title": "NotebookLM Capture"
+  }
+}
