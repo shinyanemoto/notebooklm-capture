@@ -11,9 +11,7 @@
     drag: {
       active: false,
       pointerId: null,
-      startPointerX: 0,
       startPointerY: 0,
-      startLeft: 0,
       startTop: 0,
       holdTimer: null,
       suppressToggleClick: false
@@ -188,12 +186,11 @@
     }
 
     const bounds = getButtonBounds();
-    const maxLeft = Math.max(DEFAULT_BUTTON_MARGIN, window.innerWidth - bounds.width - DEFAULT_BUTTON_MARGIN);
     const maxTop = Math.max(DEFAULT_BUTTON_MARGIN, window.innerHeight - bounds.height - DEFAULT_BUTTON_MARGIN);
 
-    root.style.left = `${clamp(offset.left, DEFAULT_BUTTON_MARGIN, maxLeft)}px`;
     root.style.top = `${clamp(offset.top, DEFAULT_BUTTON_MARGIN, maxTop)}px`;
-    root.style.right = 'auto';
+    root.style.left = 'auto';
+    root.style.right = `${DEFAULT_BUTTON_MARGIN}px`;
     root.style.bottom = 'auto';
   }
 
@@ -219,7 +216,6 @@
   function getCurrentOffset() {
     const rect = root.getBoundingClientRect();
     return {
-      left: Math.round(rect.left),
       top: Math.round(rect.top)
     };
   }
@@ -495,9 +491,7 @@
     const offset = getCurrentOffset();
     STATE.drag.active = true;
     STATE.drag.pointerId = event.pointerId;
-    STATE.drag.startPointerX = event.clientX;
     STATE.drag.startPointerY = event.clientY;
-    STATE.drag.startLeft = offset.left;
     STATE.drag.startTop = offset.top;
     toggleButton.classList.add('dragging');
 
@@ -536,10 +530,8 @@
     }
 
     event.preventDefault();
-    const deltaX = event.clientX - STATE.drag.startPointerX;
     const deltaY = event.clientY - STATE.drag.startPointerY;
     applyFloatingButtonOffset({
-      left: STATE.drag.startLeft + deltaX,
       top: STATE.drag.startTop + deltaY
     });
   });

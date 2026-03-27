@@ -37,10 +37,8 @@
     const offset = settings?.ui?.floatingButtonOffset;
     const floatingButtonOffset =
       offset &&
-      Number.isFinite(offset.left) &&
       Number.isFinite(offset.top)
         ? {
-            left: Math.max(0, Math.round(offset.left)),
             top: Math.max(0, Math.round(offset.top))
           }
         : null;
