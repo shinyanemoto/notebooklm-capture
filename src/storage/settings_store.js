@@ -7,7 +7,8 @@
     notebooks: [],
     ui: {
       position: 'bottom-right',
-      startCollapsed: false
+      startCollapsed: false,
+      floatingButtonOffset: null
     },
     tagPresets: ['todo', 'research', 'idea']
   };
@@ -33,6 +34,16 @@
 
     const position = settings?.ui?.position || DEFAULT_SETTINGS.ui.position;
     const startCollapsed = Boolean(settings?.ui?.startCollapsed);
+    const offset = settings?.ui?.floatingButtonOffset;
+    const floatingButtonOffset =
+      offset &&
+      Number.isFinite(offset.left) &&
+      Number.isFinite(offset.top)
+        ? {
+            left: Math.max(0, Math.round(offset.left)),
+            top: Math.max(0, Math.round(offset.top))
+          }
+        : null;
 
     const tagPresets = Array.isArray(settings?.tagPresets)
       ? settings.tagPresets.filter(Boolean).map((tag) => String(tag).trim()).filter(Boolean)
@@ -42,7 +53,8 @@
       notebooks,
       ui: {
         position,
-        startCollapsed
+        startCollapsed,
+        floatingButtonOffset
       },
       tagPresets
     };
@@ -57,7 +69,15 @@
   }
 
   async function saveSettings(settings) {
-    const normalized = normalize(settings);
+    const current = await getSettings();
+    const normalized = normalize({
+      ...current,
+      ...settings,
+      ui: {
+        ...current.ui,
+        ...settings?.ui
+      }
+    });
     await chrome.storage.local.set({
       [STORAGE_KEY]: normalized
     });

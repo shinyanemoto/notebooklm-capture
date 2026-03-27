@@ -7,10 +7,22 @@
   window.__notebookCaptureFloatingUiLoaded = true;
 
   const STATE = {
-    tags: new Set()
+    tags: new Set(),
+    drag: {
+      active: false,
+      pointerId: null,
+      startPointerX: 0,
+      startPointerY: 0,
+      startLeft: 0,
+      startTop: 0,
+      holdTimer: null,
+      suppressToggleClick: false
+    }
   };
 
   const DEFAULT_TAG_OPTIONS = ['todo', 'research', 'idea'];
+  const DEFAULT_BUTTON_MARGIN = 16;
+  const DRAG_HOLD_MS = 260;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -33,6 +45,11 @@
       font-size: 12px;
       font-weight: 600;
       box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
+      touch-action: none;
+    }
+    .nlm-capture-button.dragging {
+      cursor: grabbing;
+      opacity: 0.9;
     }
     .nlm-capture-panel {
       width: 280px;
@@ -123,6 +140,90 @@
   statusLine.style.minHeight = '16px';
   statusLine.style.color = '#0b57d0';
 
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  async function loadSettings() {
+    if (!chrome?.storage?.local?.get) {
+      return {
+        ui: {
+          floatingButtonOffset: null
+        },
+        tagPresets: DEFAULT_TAG_OPTIONS
+      };
+    }
+
+    const result = await chrome.storage.local.get({
+      settings: {
+        ui: {
+          floatingButtonOffset: null
+        },
+        tagPresets: DEFAULT_TAG_OPTIONS
+      }
+    });
+
+    return result.settings || {
+      ui: {
+        floatingButtonOffset: null
+      },
+      tagPresets: DEFAULT_TAG_OPTIONS
+    };
+  }
+
+  function getButtonBounds() {
+    return {
+      width: toggleButton.offsetWidth || 48,
+      height: toggleButton.offsetHeight || 48
+    };
+  }
+
+  function applyFloatingButtonOffset(offset) {
+    if (!offset) {
+      root.style.left = '';
+      root.style.top = '';
+      root.style.right = `${DEFAULT_BUTTON_MARGIN}px`;
+      root.style.bottom = `${DEFAULT_BUTTON_MARGIN}px`;
+      return;
+    }
+
+    const bounds = getButtonBounds();
+    const maxLeft = Math.max(DEFAULT_BUTTON_MARGIN, window.innerWidth - bounds.width - DEFAULT_BUTTON_MARGIN);
+    const maxTop = Math.max(DEFAULT_BUTTON_MARGIN, window.innerHeight - bounds.height - DEFAULT_BUTTON_MARGIN);
+
+    root.style.left = `${clamp(offset.left, DEFAULT_BUTTON_MARGIN, maxLeft)}px`;
+    root.style.top = `${clamp(offset.top, DEFAULT_BUTTON_MARGIN, maxTop)}px`;
+    root.style.right = 'auto';
+    root.style.bottom = 'auto';
+  }
+
+  async function saveFloatingButtonOffset(offset) {
+    if (!chrome?.storage?.local?.get || !chrome?.storage?.local?.set) {
+      return;
+    }
+
+    const settings = await loadSettings();
+    const nextSettings = {
+      ...settings,
+      ui: {
+        ...(settings.ui || {}),
+        floatingButtonOffset: offset
+      }
+    };
+
+    await chrome.storage.local.set({
+      settings: nextSettings
+    });
+  }
+
+  function getCurrentOffset() {
+    const rect = root.getBoundingClientRect();
+    return {
+      left: Math.round(rect.left),
+      top: Math.round(rect.top)
+    };
+  }
+
   function normalizeTagPresets(rawValue) {
     if (!Array.isArray(rawValue)) {
       return DEFAULT_TAG_OPTIONS.slice();
@@ -158,16 +259,8 @@
   }
 
   async function loadTagButtonsFromSettings() {
-    if (!chrome?.storage?.local?.get) {
-      renderTagButtons(DEFAULT_TAG_OPTIONS);
-      return;
-    }
-
-    const result = await chrome.storage.local.get({
-      settings: { tagPresets: DEFAULT_TAG_OPTIONS }
-    });
-
-    const tagOptions = normalizeTagPresets(result?.settings?.tagPresets);
+    const settings = await loadSettings();
+    const tagOptions = normalizeTagPresets(settings?.tagPresets);
     renderTagButtons(tagOptions);
   }
 
@@ -347,12 +440,116 @@
   toggleButton.className = 'nlm-capture-button';
   toggleButton.textContent = 'Memo';
   toggleButton.addEventListener('click', async () => {
+    if (STATE.drag.suppressToggleClick) {
+      STATE.drag.suppressToggleClick = false;
+      return;
+    }
+
     const isOpen = panel.classList.toggle('open');
     if (isOpen) {
       await refreshGeminiTabOptions();
     }
   });
 
+  function stopHoldTimer() {
+    if (STATE.drag.holdTimer) {
+      clearTimeout(STATE.drag.holdTimer);
+      STATE.drag.holdTimer = null;
+    }
+  }
+
+  function startDragging(event) {
+    const offset = getCurrentOffset();
+    STATE.drag.active = true;
+    STATE.drag.pointerId = event.pointerId;
+    STATE.drag.startPointerX = event.clientX;
+    STATE.drag.startPointerY = event.clientY;
+    STATE.drag.startLeft = offset.left;
+    STATE.drag.startTop = offset.top;
+    toggleButton.classList.add('dragging');
+
+    if (toggleButton.setPointerCapture) {
+      toggleButton.setPointerCapture(event.pointerId);
+    }
+  }
+
+  function stopDragging() {
+    STATE.drag.active = false;
+    toggleButton.classList.remove('dragging');
+  }
+
+  toggleButton.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    stopHoldTimer();
+    STATE.drag.pointerId = event.pointerId;
+    const pointerSnapshot = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY
+    };
+    STATE.drag.holdTimer = setTimeout(() => {
+      startDragging(pointerSnapshot);
+      panel.classList.remove('open');
+      STATE.drag.holdTimer = null;
+    }, DRAG_HOLD_MS);
+  });
+
+  toggleButton.addEventListener('pointermove', (event) => {
+    if (!STATE.drag.active || STATE.drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const deltaX = event.clientX - STATE.drag.startPointerX;
+    const deltaY = event.clientY - STATE.drag.startPointerY;
+    applyFloatingButtonOffset({
+      left: STATE.drag.startLeft + deltaX,
+      top: STATE.drag.startTop + deltaY
+    });
+  });
+
+  async function finishDrag(event) {
+    if (STATE.drag.active && STATE.drag.pointerId === event.pointerId) {
+      STATE.drag.suppressToggleClick = true;
+      const offset = getCurrentOffset();
+      stopDragging();
+      await saveFloatingButtonOffset(offset);
+    }
+
+    stopHoldTimer();
+    if (toggleButton.releasePointerCapture && STATE.drag.pointerId === event.pointerId) {
+      try {
+        toggleButton.releasePointerCapture(event.pointerId);
+      } catch (_error) {
+        // Ignore capture release errors.
+      }
+    }
+    STATE.drag.pointerId = null;
+  }
+
+  toggleButton.addEventListener('pointerup', (event) => {
+    finishDrag(event);
+  });
+
+  toggleButton.addEventListener('pointercancel', (event) => {
+    finishDrag(event);
+  });
+
+  window.addEventListener('resize', () => {
+    applyFloatingButtonOffset(getCurrentOffset());
+  });
+
   root.append(panel, toggleButton);
   document.documentElement.append(style, root);
+
+  loadSettings()
+    .then((settings) => {
+      applyFloatingButtonOffset(settings?.ui?.floatingButtonOffset || null);
+    })
+    .catch(() => {
+      applyFloatingButtonOffset(null);
+    });
 })();
