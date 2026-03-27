@@ -21,6 +21,7 @@
   const DEFAULT_TAG_OPTIONS = ['todo', 'research', 'idea'];
   const DEFAULT_BUTTON_MARGIN = 16;
   const DRAG_HOLD_MS = 260;
+  const PANEL_BUTTON_GAP = 12;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -231,7 +232,7 @@
     const panelHeight = panel.offsetHeight || 260;
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
-    const spacing = 10;
+    const spacing = PANEL_BUTTON_GAP;
 
     const spaceAbove = buttonRect.top - DEFAULT_BUTTON_MARGIN;
     const spaceBelow = viewportHeight - buttonRect.bottom - DEFAULT_BUTTON_MARGIN;
@@ -245,7 +246,7 @@
     const maxTop = viewportHeight - DEFAULT_BUTTON_MARGIN - buttonRect.top - panelHeight;
     const panelTop = clamp(desiredTop, minTop, maxTop);
 
-    const desiredLeft = Math.min(0, buttonRect.width - panelWidth);
+    const desiredLeft = -(panelWidth + spacing);
     const minLeft = DEFAULT_BUTTON_MARGIN - buttonRect.left;
     const maxLeft = viewportWidth - DEFAULT_BUTTON_MARGIN - buttonRect.left - panelWidth;
     const panelLeft = clamp(desiredLeft, minLeft, maxLeft);
@@ -574,6 +575,16 @@
       positionPanel();
     }
   });
+
+  if (typeof ResizeObserver !== 'undefined') {
+    const resizeObserver = new ResizeObserver(() => {
+      if (!panel.classList.contains('open')) {
+        return;
+      }
+      positionPanel();
+    });
+    resizeObserver.observe(panel);
+  }
 
   root.append(panel, toggleButton);
   document.documentElement.append(style, root);
