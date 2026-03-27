@@ -224,6 +224,37 @@
     };
   }
 
+  function positionPanel() {
+    const buttonRect = toggleButton.getBoundingClientRect();
+    const panelWidth = panel.offsetWidth || 300;
+    const panelHeight = panel.offsetHeight || 260;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const spacing = 10;
+
+    const spaceAbove = buttonRect.top - DEFAULT_BUTTON_MARGIN;
+    const spaceBelow = viewportHeight - buttonRect.bottom - DEFAULT_BUTTON_MARGIN;
+
+    const shouldOpenBelow = spaceAbove < panelHeight && spaceBelow > spaceAbove;
+    const desiredTop = shouldOpenBelow
+      ? buttonRect.height + spacing
+      : -(panelHeight + spacing);
+
+    const minTop = DEFAULT_BUTTON_MARGIN - buttonRect.top;
+    const maxTop = viewportHeight - DEFAULT_BUTTON_MARGIN - buttonRect.top - panelHeight;
+    const panelTop = clamp(desiredTop, minTop, maxTop);
+
+    const desiredLeft = Math.min(0, buttonRect.width - panelWidth);
+    const minLeft = DEFAULT_BUTTON_MARGIN - buttonRect.left;
+    const maxLeft = viewportWidth - DEFAULT_BUTTON_MARGIN - buttonRect.left - panelWidth;
+    const panelLeft = clamp(desiredLeft, minLeft, maxLeft);
+
+    panel.style.position = 'absolute';
+    panel.style.marginBottom = '0';
+    panel.style.left = `${panelLeft}px`;
+    panel.style.top = `${panelTop}px`;
+  }
+
   function normalizeTagPresets(rawValue) {
     if (!Array.isArray(rawValue)) {
       return DEFAULT_TAG_OPTIONS.slice();
@@ -447,7 +478,9 @@
 
     const isOpen = panel.classList.toggle('open');
     if (isOpen) {
+      positionPanel();
       await refreshGeminiTabOptions();
+      positionPanel();
     }
   });
 
@@ -540,6 +573,9 @@
 
   window.addEventListener('resize', () => {
     applyFloatingButtonOffset(getCurrentOffset());
+    if (panel.classList.contains('open')) {
+      positionPanel();
+    }
   });
 
   root.append(panel, toggleButton);
