@@ -4,6 +4,7 @@ const NOTEBOOK_HOST = 'notebooklm.google.com';
 const DEFAULT_NOTEBOOK_URL = `https://${NOTEBOOK_HOST}/`;
 const GEMINI_HOST = 'gemini.google.com';
 const DEFAULT_GEMINI_URL = `https://${GEMINI_HOST}/app`;
+const INBOX_TARGET = 'inbox';
 const LOG_STORAGE_KEY = 'captureLogs';
 const SETTINGS_STORAGE_KEY = 'settings';
 const MAX_LOGS = 500;
@@ -109,6 +110,28 @@ async function getConfiguredNotebookUrl() {
 
   const firstValid = notebooks.find((item) => item && typeof item.url === 'string' && item.url.trim());
   return firstValid ? firstValid.url.trim() : null;
+}
+
+function sanitizeWebAppUrl(url) {
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return null;
+    }
+    return parsed.toString();
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function getInboxWebAppUrl() {
+  const result = await chrome.storage.local.get({ [SETTINGS_STORAGE_KEY]: {} });
+  const settings = result[SETTINGS_STORAGE_KEY] || {};
+  return sanitizeWebAppUrl(settings?.inbox?.webAppUrl);
 }
 
 function formatTabLabel(tab) {
@@ -431,6 +454,55 @@ async function addCaptureLog(entry) {
   await chrome.storage.local.set({ [LOG_STORAGE_KEY]: next });
 }
 
+async function sendToInboxWebApp(payload, sender) {
+  const webAppUrl = await getInboxWebAppUrl();
+  if (!webAppUrl) {
+    throw new Error('inbox_web_app_url_missing');
+  }
+
+  const context = payload.context || {};
+  const tags = normalizeTags(payload.tags);
+  const response = await fetch(webAppUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      text: String(payload.memo || '').trim(),
+      tag: tags[0] || '',
+      tags,
+      title: context.title || sender.tab?.title || '',
+      url: context.url || sender.tab?.url || '',
+      hostname: context.hostname || '',
+      timestamp: context.timestamp || new Date().toISOString(),
+      slack: context.slack || null
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`inbox_http_${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  let result = null;
+
+  if (contentType.includes('application/json')) {
+    result = await response.json();
+  } else {
+    result = { status: 'success', raw: await response.text() };
+  }
+
+  if (result?.status && result.status !== 'success') {
+    throw new Error(result.message || `inbox_${result.status}`);
+  }
+
+  return {
+    ok: true,
+    result,
+    targetUrl: webAppUrl
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) {
     return false;
@@ -470,7 +542,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   const context = payload.context || {};
-  const target = payload.target === 'gemini' ? 'gemini' : 'notebooklm';
+  const target = payload.target === 'gemini'
+    ? 'gemini'
+    : payload.target === INBOX_TARGET
+      ? INBOX_TARGET
+      : 'notebooklm';
+
+  if (target === INBOX_TARGET) {
+    sendToInboxWebApp(payload, sender)
+      .then(async ({ result, targetUrl }) => {
+        await addCaptureLog({
+          target,
+          memo,
+          tags: normalizeTags(payload.tags),
+          timestamp: context.timestamp || new Date().toISOString(),
+          sourcePage: {
+            title: context.title || sender.tab?.title || '',
+            url: context.url || sender.tab?.url || '',
+            hostname: context.hostname || ''
+          }
+        });
+
+        sendResponse({
+          ok: true,
+          result,
+          targetUrl,
+          target
+        });
+      })
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          reason: error?.message || 'send_failed'
+        });
+      });
+    return true;
+  }
+
   const memoText = target === 'gemini'
     ? memo
     : buildMessage(payload, context);

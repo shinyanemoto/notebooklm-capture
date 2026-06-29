@@ -5,6 +5,9 @@
 
   const DEFAULT_SETTINGS = {
     notebooks: [],
+    inbox: {
+      webAppUrl: ''
+    },
     ui: {
       position: 'bottom-right',
       startCollapsed: false,
@@ -32,6 +35,10 @@
           .filter(Boolean)
       : [];
 
+    const webAppUrl = typeof settings?.inbox?.webAppUrl === 'string'
+      ? settings.inbox.webAppUrl.trim()
+      : '';
+
     const position = settings?.ui?.position || DEFAULT_SETTINGS.ui.position;
     const startCollapsed = Boolean(settings?.ui?.startCollapsed);
     const offset = settings?.ui?.floatingButtonOffset;
@@ -49,6 +56,9 @@
 
     return {
       notebooks,
+      inbox: {
+        webAppUrl
+      },
       ui: {
         position,
         startCollapsed,

@@ -18,7 +18,7 @@
     }
   };
 
-  const DEFAULT_TAG_OPTIONS = ['todo', 'research', 'idea'];
+  const DEFAULT_TAG_OPTIONS = ['todo', 'research', 'idea', 'memo'];
   const DEFAULT_BUTTON_MARGIN = 16;
   const DRAG_HOLD_MS = 260;
   const PANEL_BUTTON_GAP = 12;
@@ -93,32 +93,19 @@
       border-color: #0b57d0;
     }
     .nlm-capture-send {
-      flex: 1 1 0;
+      width: 100%;
       border: none;
       border-radius: 8px;
       background: #0b57d0;
       color: #fff;
-      padding: 8px;
+      padding: 10px;
       cursor: pointer;
       font-weight: 600;
-    }
-    .nlm-capture-send-row {
-      display: flex;
-      gap: 8px;
       margin-top: 8px;
     }
-    .nlm-capture-send.gemini {
-      background: #1a73e8;
-    }
-    .nlm-capture-target-select {
-      width: 100%;
-      box-sizing: border-box;
-      margin-top: 8px;
-      padding: 8px;
-      border: 1px solid #d0d0d0;
-      border-radius: 8px;
-      background: #fff;
-      font-size: 12px;
+    .nlm-capture-send:disabled {
+      background: #ccc;
+      cursor: not-allowed;
     }
   `;
 
@@ -129,20 +116,21 @@
   panel.className = 'nlm-capture-panel';
 
   const textarea = document.createElement('textarea');
-  textarea.placeholder = 'Quick memo...';
+  textarea.placeholder = 'Inboxに放り込む...';
 
   const tags = document.createElement('div');
   tags.className = 'nlm-capture-tags';
-
-  const geminiTargetSelect = document.createElement('select');
-  geminiTargetSelect.className = 'nlm-capture-target-select';
-  geminiTargetSelect.style.display = 'none';
 
   const statusLine = document.createElement('div');
   statusLine.style.marginTop = '8px';
   statusLine.style.fontSize = '12px';
   statusLine.style.minHeight = '16px';
   statusLine.style.color = '#0b57d0';
+
+  const sendButton = document.createElement('button');
+  sendButton.type = 'button';
+  sendButton.className = 'nlm-capture-send';
+  sendButton.textContent = 'Send to Inbox';
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
@@ -151,28 +139,31 @@
   async function loadSettings() {
     if (!chrome?.storage?.local?.get) {
       return {
-        ui: {
-          floatingButtonOffset: null
-        },
         tagPresets: DEFAULT_TAG_OPTIONS
       };
     }
 
     const result = await chrome.storage.local.get({
       settings: {
-        ui: {
-          floatingButtonOffset: null
-        },
         tagPresets: DEFAULT_TAG_OPTIONS
       }
     });
 
     return result.settings || {
-      ui: {
-        floatingButtonOffset: null
-      },
       tagPresets: DEFAULT_TAG_OPTIONS
     };
+  }
+
+  function normalizeTagPresets(rawValue) {
+    if (!Array.isArray(rawValue)) {
+      return DEFAULT_TAG_OPTIONS.slice();
+    }
+
+    const normalized = rawValue
+      .map((tag) => String(tag).trim())
+      .filter(Boolean);
+
+    return normalized.length ? normalized : DEFAULT_TAG_OPTIONS.slice();
   }
 
   function getButtonBounds() {
@@ -182,54 +173,10 @@
     };
   }
 
-  function applyFloatingButtonOffset(offset) {
-    if (!offset) {
-      root.style.left = '';
-      root.style.top = '';
-      root.style.right = `${DEFAULT_BUTTON_MARGIN}px`;
-      root.style.bottom = `${DEFAULT_BUTTON_MARGIN}px`;
-      return;
-    }
-
-    const bounds = getButtonBounds();
-    const maxTop = Math.max(DEFAULT_BUTTON_MARGIN, window.innerHeight - bounds.height - DEFAULT_BUTTON_MARGIN);
-
-    root.style.top = `${clamp(offset.top, DEFAULT_BUTTON_MARGIN, maxTop)}px`;
-    root.style.left = 'auto';
-    root.style.right = `${DEFAULT_BUTTON_MARGIN}px`;
-    root.style.bottom = 'auto';
-  }
-
-  async function saveFloatingButtonOffset(offset) {
-    if (!chrome?.storage?.local?.get || !chrome?.storage?.local?.set) {
-      return;
-    }
-
-    const settings = await loadSettings();
-    const nextSettings = {
-      ...settings,
-      ui: {
-        ...(settings.ui || {}),
-        floatingButtonOffset: offset
-      }
-    };
-
-    await chrome.storage.local.set({
-      settings: nextSettings
-    });
-  }
-
-  function getCurrentOffset() {
-    const rect = root.getBoundingClientRect();
-    return {
-      top: Math.round(rect.top)
-    };
-  }
-
   function positionPanel() {
     const buttonRect = toggleButton.getBoundingClientRect();
     const panelWidth = panel.offsetWidth || 300;
-    const panelHeight = panel.offsetHeight || 260;
+    const panelHeight = panel.offsetHeight || 200;
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const spacing = PANEL_BUTTON_GAP;
@@ -257,32 +204,20 @@
     panel.style.top = `${panelTop}px`;
   }
 
-  function normalizeTagPresets(rawValue) {
-    if (!Array.isArray(rawValue)) {
-      return DEFAULT_TAG_OPTIONS.slice();
-    }
-
-    const normalized = rawValue
-      .map((tag) => String(tag).trim())
-      .filter(Boolean);
-
-    return normalized.length ? normalized : DEFAULT_TAG_OPTIONS.slice();
-  }
-
   function renderTagButtons(tagOptions) {
     STATE.tags.clear();
     tags.innerHTML = '';
-
     tagOptions.forEach((tag) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'nlm-capture-tag';
       button.textContent = tag;
       button.addEventListener('click', () => {
-        if (STATE.tags.has(tag)) {
-          STATE.tags.delete(tag);
-          button.classList.remove('active');
-        } else {
+        const isActive = STATE.tags.has(tag);
+        STATE.tags.clear();
+        tags.querySelectorAll('.nlm-capture-tag.active').forEach(el => el.classList.remove('active'));
+
+        if (!isActive) {
           STATE.tags.add(tag);
           button.classList.add('active');
         }
@@ -293,8 +228,7 @@
 
   async function loadTagButtonsFromSettings() {
     const settings = await loadSettings();
-    const tagOptions = normalizeTagPresets(settings?.tagPresets);
-    renderTagButtons(tagOptions);
+    renderTagButtons(normalizeTagPresets(settings?.tagPresets));
   }
 
   renderTagButtons(DEFAULT_TAG_OPTIONS);
@@ -302,18 +236,12 @@
     renderTagButtons(DEFAULT_TAG_OPTIONS);
   });
 
-  const sendRow = document.createElement('div');
-  sendRow.className = 'nlm-capture-send-row';
-
-  const notebookSendButton = document.createElement('button');
-  notebookSendButton.type = 'button';
-  notebookSendButton.className = 'nlm-capture-send';
-  notebookSendButton.textContent = 'Send to NotebookLM';
-
-  const geminiSendButton = document.createElement('button');
-  geminiSendButton.type = 'button';
-  geminiSendButton.className = 'nlm-capture-send gemini';
-  geminiSendButton.textContent = 'Send to Gemini';
+  function resetTagsUI() {
+    STATE.tags.clear();
+    tags.querySelectorAll('.nlm-capture-tag.active').forEach((el) => {
+      el.classList.remove('active');
+    });
+  }
 
   async function requestSend(detail) {
     if (!chrome?.runtime?.sendMessage) {
@@ -342,77 +270,28 @@
     });
   }
 
-  async function requestGeminiTabs() {
-    if (!chrome?.runtime?.sendMessage) {
-      return [];
+  function formatErrorMessage(reason) {
+    if (reason === 'inbox_web_app_url_missing') {
+      return 'Set the GAS Web App URL in extension settings';
     }
 
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage(
-        { type: 'NOTEBOOKLM_CAPTURE_LIST_GEMINI_TABS' },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            resolve([]);
-            return;
-          }
-          resolve(Array.isArray(response?.tabs) ? response.tabs : []);
-        }
-      );
-    });
-  }
-
-  function truncateLabel(text) {
-    const value = String(text || '').trim();
-    if (value.length <= 48) {
-      return value;
+    if (typeof reason === 'string' && reason.startsWith('inbox_http_')) {
+      return `Inbox request failed (${reason.replace('inbox_http_', 'HTTP ')})`;
     }
-    return `${value.slice(0, 45)}...`;
+
+    return reason || 'send_failed';
   }
 
-  function buildGeminiOptionLabel(tab, index) {
-    const numberLabel = `Gemini ${index + 1}`;
-    const stateLabel = tab.active ? 'Current' : numberLabel;
-    const hintSource = tab.pathHint || tab.title || tab.url || `tab-${tab.id}`;
-    return truncateLabel(`${stateLabel} | ${hintSource}`);
-  }
-
-  async function refreshGeminiTabOptions() {
-    const tabs = await requestGeminiTabs();
-    geminiTargetSelect.innerHTML = '';
-
-    const autoOption = document.createElement('option');
-    autoOption.value = '';
-    autoOption.textContent = tabs.length ? 'Auto select Gemini tab' : 'Auto select Gemini tab (none open)';
-    geminiTargetSelect.appendChild(autoOption);
-
-    tabs.forEach((tab, index) => {
-      const option = document.createElement('option');
-      option.value = String(tab.id);
-      option.textContent = buildGeminiOptionLabel(tab, index);
-      geminiTargetSelect.appendChild(option);
-    });
-
-    geminiTargetSelect.style.display = 'block';
-  }
-
-  function resetTagsUI() {
-    STATE.tags.clear();
-    tags.querySelectorAll('.nlm-capture-tag.active').forEach((el) => {
-      el.classList.remove('active');
-    });
-  }
-
-  function setSendingState(isSending) {
-    notebookSendButton.disabled = isSending;
-    geminiSendButton.disabled = isSending;
-  }
-
-  async function handleSend(target) {
+  async function handleSend() {
     const memo = textarea.value.trim();
     if (!memo) {
       textarea.focus();
       return;
     }
+
+    sendButton.disabled = true;
+    statusLine.textContent = 'Sending...';
+    statusLine.style.color = '#0b57d0';
 
     const context = window.NotebookLMCaptureContextExtractor?.extractContext?.() || {
       timestamp: new Date().toISOString(),
@@ -421,52 +300,43 @@
       hostname: location.hostname
     };
 
-    const detail = {
-      memo,
-      tags: Array.from(STATE.tags),
-      context,
-      target
-    };
+    try {
+      const response = await requestSend({
+        memo,
+        tags: Array.from(STATE.tags),
+        context,
+        target: 'inbox'
+      });
+      if (!response?.ok) {
+        throw new Error(response?.reason || 'send_failed');
+      }
 
-    if (target === 'gemini' && geminiTargetSelect.value) {
-      detail.geminiTabId = Number(geminiTargetSelect.value);
-    }
-
-    window.dispatchEvent(
-      new CustomEvent('notebooklm-capture:send', { detail })
-    );
-
-    setSendingState(true);
-    statusLine.textContent = 'Sending...';
-    const response = await requestSend(detail);
-    setSendingState(false);
-
-    if (response?.ok) {
-      statusLine.style.color = '#0b57d0';
-      statusLine.textContent = target === 'gemini' ? 'Sent to Gemini' : 'Sent to NotebookLM';
+      statusLine.textContent = 'Sent to Inbox';
       textarea.value = '';
       resetTagsUI();
-      return;
-    }
 
-    statusLine.style.color = '#c5221f';
-    statusLine.textContent = `Failed: ${response?.reason || 'send_failed'}`;
-    setTimeout(() => {
-      statusLine.style.color = '#0b57d0';
-    }, 1200);
+      setTimeout(() => {
+        panel.classList.remove('open');
+        statusLine.textContent = '';
+      }, 1000);
+
+    } catch (error) {
+      statusLine.style.color = '#c5221f';
+      statusLine.textContent = `Failed: ${formatErrorMessage(error?.message)}`;
+    } finally {
+      sendButton.disabled = false;
+    }
   }
 
-  notebookSendButton.addEventListener('click', () => {
-    handleSend('notebooklm');
+  sendButton.addEventListener('click', handleSend);
+
+  textarea.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      handleSend();
+    }
   });
 
-  geminiSendButton.addEventListener('click', () => {
-    handleSend('gemini');
-  });
-
-  sendRow.append(notebookSendButton, geminiSendButton);
-
-  panel.append(textarea, tags, geminiTargetSelect, sendRow, statusLine);
+  panel.append(textarea, tags, sendButton, statusLine);
 
   const toggleButton = document.createElement('button');
   toggleButton.type = 'button';
@@ -481,8 +351,7 @@
     const isOpen = panel.classList.toggle('open');
     if (isOpen) {
       positionPanel();
-      await refreshGeminiTabOptions();
-      positionPanel();
+      textarea.focus();
     }
   });
 
@@ -494,11 +363,11 @@
   }
 
   function startDragging(event) {
-    const offset = getCurrentOffset();
+    const rect = root.getBoundingClientRect();
     STATE.drag.active = true;
     STATE.drag.pointerId = event.pointerId;
     STATE.drag.startPointerY = event.clientY;
-    STATE.drag.startTop = offset.top;
+    STATE.drag.startTop = Math.round(rect.top);
     toggleButton.classList.add('dragging');
 
     if (toggleButton.setPointerCapture) {
@@ -512,17 +381,10 @@
   }
 
   toggleButton.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) {
-      return;
-    }
-
+    if (event.button !== 0) return;
     stopHoldTimer();
     STATE.drag.pointerId = event.pointerId;
-    const pointerSnapshot = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY
-    };
+    const pointerSnapshot = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY };
     STATE.drag.holdTimer = setTimeout(() => {
       startDragging(pointerSnapshot);
       panel.classList.remove('open');
@@ -531,69 +393,41 @@
   });
 
   toggleButton.addEventListener('pointermove', (event) => {
-    if (!STATE.drag.active || STATE.drag.pointerId !== event.pointerId) {
-      return;
-    }
-
+    if (!STATE.drag.active || STATE.drag.pointerId !== event.pointerId) return;
     event.preventDefault();
     const deltaY = event.clientY - STATE.drag.startPointerY;
-    applyFloatingButtonOffset({
-      top: STATE.drag.startTop + deltaY
-    });
+    const bounds = getButtonBounds();
+    const maxTop = Math.max(DEFAULT_BUTTON_MARGIN, window.innerHeight - bounds.height - DEFAULT_BUTTON_MARGIN);
+    const newTop = clamp(STATE.drag.startTop + deltaY, DEFAULT_BUTTON_MARGIN, maxTop);
+
+    root.style.top = `${newTop}px`;
+    root.style.left = 'auto';
+    root.style.right = `${DEFAULT_BUTTON_MARGIN}px`;
+    root.style.bottom = 'auto';
   });
 
-  async function finishDrag(event) {
+  function finishDrag(event) {
     if (STATE.drag.active && STATE.drag.pointerId === event.pointerId) {
       STATE.drag.suppressToggleClick = true;
-      const offset = getCurrentOffset();
       stopDragging();
-      await saveFloatingButtonOffset(offset);
     }
-
     stopHoldTimer();
     if (toggleButton.releasePointerCapture && STATE.drag.pointerId === event.pointerId) {
-      try {
-        toggleButton.releasePointerCapture(event.pointerId);
-      } catch (_error) {
-        // Ignore capture release errors.
-      }
+      try { toggleButton.releasePointerCapture(event.pointerId); } catch (_e) {}
     }
     STATE.drag.pointerId = null;
   }
 
-  toggleButton.addEventListener('pointerup', (event) => {
-    finishDrag(event);
-  });
-
-  toggleButton.addEventListener('pointercancel', (event) => {
-    finishDrag(event);
-  });
+  toggleButton.addEventListener('pointerup', finishDrag);
+  toggleButton.addEventListener('pointercancel', finishDrag);
 
   window.addEventListener('resize', () => {
-    applyFloatingButtonOffset(getCurrentOffset());
     if (panel.classList.contains('open')) {
       positionPanel();
     }
   });
 
-  if (typeof ResizeObserver !== 'undefined') {
-    const resizeObserver = new ResizeObserver(() => {
-      if (!panel.classList.contains('open')) {
-        return;
-      }
-      positionPanel();
-    });
-    resizeObserver.observe(panel);
-  }
-
   root.append(panel, toggleButton);
   document.documentElement.append(style, root);
 
-  loadSettings()
-    .then((settings) => {
-      applyFloatingButtonOffset(settings?.ui?.floatingButtonOffset || null);
-    })
-    .catch(() => {
-      applyFloatingButtonOffset(null);
-    });
 })();

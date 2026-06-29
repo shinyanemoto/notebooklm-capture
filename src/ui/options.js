@@ -87,6 +87,7 @@
     document.getElementById('position').value = settings.ui.position;
     document.getElementById('startCollapsed').checked = settings.ui.startCollapsed;
     document.getElementById('tags').value = settings.tagPresets.join(',');
+    document.getElementById('inboxWebAppUrl').value = settings.inbox?.webAppUrl || '';
   }
 
   async function save() {
@@ -99,8 +100,12 @@
       .split(',')
       .map((tag) => tag.trim())
       .filter(Boolean);
+    const webAppUrl = document.getElementById('inboxWebAppUrl').value.trim();
 
     await store.saveSettings({
+      inbox: {
+        webAppUrl
+      },
       notebooks,
       ui: {
         position,
